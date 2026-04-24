@@ -1,0 +1,24 @@
+:root {
+  color: #eff7ff;
+  font-family: Georgia, "Times New Roman", serif;
+  background:
+    radial-gradient(circle at top, rgba(56, 111, 158, 0.45), transparent 35%),
+    linear-gradient(180deg, #091723 0%, #102a3b 38%, #061017 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+}
