@@ -3,6 +3,14 @@ import { appState } from "../core/appState";
 import { getZoomLimits } from "../core/options";
 import { BattleModel } from "../systems/battle";
 import { getShipRadius } from "../systems/movement";
+import playerShipUrl from "../assets/generated/player-battleship.png";
+import enemyShipUrl from "../assets/generated/enemy-battleship.png";
+import oceanTextureUrl from "../assets/generated/ocean-texture.jpg";
+import shellTracerUrl from "../assets/generated/shell-tracer.png";
+import shellSplashUrl from "../assets/generated/shell-splash.png";
+import torpedoWakeUrl from "../assets/generated/torpedo-wake.png";
+import flakBurstUrl from "../assets/generated/flak-burst.png";
+import damageStatusUrl from "../assets/generated/damage-status.png";
 
 export class BattleScene extends Phaser.Scene {
   private model!: BattleModel;
@@ -14,22 +22,45 @@ export class BattleScene extends Phaser.Scene {
   private selectedTargetId?: string;
   private followTarget!: Phaser.GameObjects.Zone;
   private damageLabels: Phaser.GameObjects.Text[] = [];
+  private visualEffects: Phaser.GameObjects.Image[] = [];
+  private shipSprites = new Map<string, Phaser.GameObjects.Image>();
+  private ocean!: Phaser.GameObjects.TileSprite;
+  private lastFlakCount = 0;
 
   constructor() {
     super("battle");
+  }
+
+  preload() {
+    this.load.image("art-player-ship", playerShipUrl);
+    this.load.image("art-enemy-ship", enemyShipUrl);
+    this.load.image("art-ocean", oceanTextureUrl);
+    this.load.image("art-shell", shellTracerUrl);
+    this.load.image("art-splash", shellSplashUrl);
+    this.load.image("art-torpedo", torpedoWakeUrl);
+    this.load.image("art-flak", flakBurstUrl);
+    this.load.image("art-damage", damageStatusUrl);
   }
 
   create() {
     this.model = new BattleModel(appState.selectedNation);
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.keys = this.input.keyboard!.addKeys("W,S,A,D,ONE,TWO,THREE,R,ESC") as Record<string, Phaser.Input.Keyboard.Key>;
+    this.ocean = this.add.tileSprite(2700, 2100, 5400, 4200, "art-ocean").setDepth(-2);
+    this.ocean.setTileScale(0.72, 0.72);
     this.world = this.add.graphics();
-    this.hud = this.add.text(20, 18, "", {
+    this.add.rectangle(16, 14, 1015, 142, 0x06131f, 0.84)
+      .setOrigin(0)
+      .setStrokeStyle(2, 0x6db8cf, 0.55)
+      .setScrollFactor(0)
+      .setDepth(19);
+    this.hud = this.add.text(34, 28, "", {
       fontFamily: "Georgia",
-      fontSize: "18px",
+      fontSize: "20px",
+      lineSpacing: 6,
       color: "#eff7ff",
-      stroke: "#061017",
-      strokeThickness: 4,
+      stroke: "#02080d",
+      strokeThickness: 3,
     }).setScrollFactor(0).setDepth(20);
     this.outcomeText = this.add.text(this.scale.width * 0.5, 82, "", {
       fontFamily: "Georgia",
@@ -98,45 +129,60 @@ export class BattleScene extends Phaser.Scene {
     g.clear();
     this.damageLabels.forEach((label) => label.destroy());
     this.damageLabels = [];
+    this.visualEffects.forEach((effect) => effect.destroy());
+    this.visualEffects = [];
+    this.ocean.tilePositionX = this.model.player.position.x * 0.08;
+    this.ocean.tilePositionY = this.model.player.position.y * 0.06;
 
-    g.fillStyle(0x0b2435);
-    g.fillRect(0, 0, 5400, 4200);
-    g.fillStyle(0x143d55, 0.55);
-    for (let x = 0; x < 5400; x += 340) {
-      for (let y = 0; y < 4200; y += 260) g.fillEllipse(x + 70, y + 40, 220, 70);
-    }
-
+    const liveShipIds = new Set<string>();
     for (const ship of this.model.ships.filter((item) => item.alive)) {
+      liveShipIds.add(ship.id);
       const radius = getShipRadius(ship);
       const outlineColor = ship.team === "player" ? 0xffffff : 0xf88d8d;
+      let shipArt = this.shipSprites.get(ship.id);
+      if (!shipArt) {
+        shipArt = this.add.image(ship.position.x, ship.position.y, ship.team === "player" ? "art-player-ship" : "art-enemy-ship").setDepth(4);
+        this.shipSprites.set(ship.id, shipArt);
+      }
+      shipArt.setPosition(ship.position.x, ship.position.y).setDisplaySize(radius * 1.15, radius * 3.1).setRotation(ship.heading + Math.PI / 2);
       g.lineStyle(2, outlineColor, 0.95);
-      g.fillStyle(ship.blueprint.silhouette.hullColor, 1);
-      drawShip(g, ship.position.x, ship.position.y, ship.heading, radius, ship.blueprint.silhouette.accentColor);
       if (this.selectedTargetId === ship.id || ship.id === this.model.player.secondaryPriorityId || ship.id === this.model.player.aaPriorityId) {
         g.lineStyle(3, 0xf9e38a, 0.95);
         g.strokeCircle(ship.position.x, ship.position.y, radius + 15);
       }
       drawBar(g, ship.position.x - 55, ship.position.y - radius - 20, 110, ship.hp / ship.blueprint.survivability.maxHp, ship.team === "player" ? 0x72d4a8 : 0xd97070);
-      if (ship.fires.length > 0) {
-        g.fillStyle(0xff8d44, 0.8);
-        g.fillCircle(ship.position.x - 12, ship.position.y, 8);
+      if (ship.fires.length > 0 || ship.floods.length > 0) {
+        const damage = this.add.image(ship.position.x, ship.position.y - 4, "art-damage")
+          .setDisplaySize(radius * 1.1, radius * 1.3)
+          .setDepth(6)
+          .setAlpha(0.92);
+        this.visualEffects.push(damage);
       }
-      if (ship.floods.length > 0) {
-        g.fillStyle(0x61c8ff, 0.9);
-        g.fillCircle(ship.position.x + 14, ship.position.y + 8, 7);
+    }
+    for (const [id, sprite] of this.shipSprites) {
+      if (!liveShipIds.has(id)) {
+        sprite.destroy();
+        this.shipSprites.delete(id);
       }
     }
 
     for (const shell of this.model.shells) {
-      g.fillStyle(shell.ammoType === "AP" ? 0xffe3a1 : 0xffa36f);
-      g.fillCircle(shell.position.x, shell.position.y, 4);
+      const angle = Math.atan2(shell.velocity.y, shell.velocity.x);
+      const tracer = this.add.image(shell.position.x, shell.position.y, "art-shell")
+        .setDisplaySize(38, 38)
+        .setRotation(angle - Math.PI / 4)
+        .setDepth(7)
+        .setTint(shell.ammoType === "AP" ? 0xfff3c4 : 0xffbd81);
+      this.visualEffects.push(tracer);
     }
 
     for (const torpedo of this.model.torpedoes) {
-      g.fillStyle(0x8cd7ff);
-      g.fillCircle(torpedo.position.x, torpedo.position.y, 5);
-      g.lineStyle(1, 0xd8f6ff, 0.6);
-      g.strokeLineShape(new Phaser.Geom.Line(torpedo.position.x, torpedo.position.y, torpedo.position.x - torpedo.velocity.x * 0.08, torpedo.position.y - torpedo.velocity.y * 0.08));
+      const angle = Math.atan2(torpedo.velocity.y, torpedo.velocity.x);
+      const wake = this.add.image(torpedo.position.x, torpedo.position.y, "art-torpedo")
+        .setDisplaySize(44, 88)
+        .setRotation(angle + Math.PI / 2)
+        .setDepth(5);
+      this.visualEffects.push(wake);
     }
 
     for (const plane of this.model.aircraft) {
@@ -149,9 +195,29 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
+    const flakEvents = this.model.texts.filter((text) => text.value.startsWith("Flak"));
+    if (flakEvents.length > this.lastFlakCount) {
+      const target = this.model.aircraft.find((plane) => plane.alive && plane.id === this.model.player.aaPriorityId)
+        ?? this.model.aircraft.find((plane) => plane.alive);
+      if (target) {
+        const flak = this.add.image(target.position.x, target.position.y, "art-flak")
+          .setDisplaySize(72, 72)
+          .setDepth(8);
+        this.tweens.add({ targets: flak, alpha: 0, scale: 1.35, duration: 420, onComplete: () => flak.destroy() });
+      }
+    }
+    this.lastFlakCount = flakEvents.length;
+
     if (appState.options.showDamageNumbers) {
       for (const text of this.model.texts) {
         const alpha = 1 - text.age / 1.1;
+        if (!text.value.startsWith("Flak")) {
+          const splash = this.add.image(text.position.x, text.position.y + 12, "art-splash")
+            .setDisplaySize(54, 54)
+            .setAlpha(alpha * 0.72)
+            .setDepth(6);
+          this.visualEffects.push(splash);
+        }
         const label = this.add.text(text.position.x, text.position.y, text.value, {
           fontFamily: "Georgia",
           fontSize: "16px",
@@ -172,24 +238,6 @@ export class BattleScene extends Phaser.Scene {
     ]);
     this.outcomeText.setText(this.model.outcome.result === "running" ? "" : `${this.model.outcome.result.toUpperCase()}: ${this.model.outcome.message}`);
   }
-}
-
-function drawShip(g: Phaser.GameObjects.Graphics, x: number, y: number, heading: number, radius: number, accentColor: number) {
-  const forward = new Phaser.Math.Vector2(Math.cos(heading), Math.sin(heading));
-  const right = new Phaser.Math.Vector2(-forward.y, forward.x);
-  const nose = new Phaser.Math.Vector2(x + forward.x * radius * 1.2, y + forward.y * radius * 1.2);
-  const sternLeft = new Phaser.Math.Vector2(x - forward.x * radius + right.x * radius * 0.4, y - forward.y * radius + right.y * radius * 0.4);
-  const sternRight = new Phaser.Math.Vector2(x - forward.x * radius - right.x * radius * 0.4, y - forward.y * radius - right.y * radius * 0.4);
-  g.beginPath();
-  g.moveTo(nose.x, nose.y);
-  g.lineTo(sternLeft.x, sternLeft.y);
-  g.lineTo(sternRight.x, sternRight.y);
-  g.closePath();
-  g.fillPath();
-  g.strokePath();
-  g.fillStyle(accentColor, 0.95);
-  g.fillCircle(x, y, radius * 0.18);
-  g.fillCircle(x - forward.x * radius * 0.35, y - forward.y * radius * 0.35, radius * 0.16);
 }
 
 function drawBar(g: Phaser.GameObjects.Graphics, x: number, y: number, width: number, ratio: number, color: number) {
