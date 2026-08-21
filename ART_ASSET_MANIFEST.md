@@ -13,4 +13,5 @@ All assets are original WW2-inspired game art. The source images used a chroma-k
 | Shell splash | `src/assets/generated/shell-splash.png` | `exec-6a0de9f2-c081-47df-80a3-b2bc089c1f63.png` | Tall water impact with a small orange flare. |
 | Torpedo wake | `src/assets/generated/torpedo-wake.png` | `exec-e7282cd5-77fa-4e17-9467-a9aeae3bd753.png` | Dark torpedo with twin bright wake trails. |
 | AA flak burst | `src/assets/generated/flak-burst.png` | `exec-1a94df2d-e250-442c-8a75-746f5ac41a13.png` | Pale-gold radial flak burst and tracer sparks. |
-| Fire and flooding status | `src/assets/generated/damage-status.png` | `exec-bf5dadf9-ffce-475b-b45f-890a7ed7efea.png` | Orange flame, black smoke, and a blue flooding ring. |
+| Fire status | `src/assets/generated/fire-status.png` | `exec-5437fd03-c45f-4948-be48-59f579d40535.png` | Orange flame and black smoke, without a flooding ring. |
+| Flooding status | `src/assets/generated/flood-status.png` | `exec-de4240f0-add9-49a2-b2e7-54d71be4ae28.png` | Dark turquoise water swirl with white foam and bubbles, without fire or smoke. |

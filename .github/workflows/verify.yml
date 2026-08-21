@@ -1,0 +1,27 @@
+name: Verify prototype
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v24
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run dev -- --host 127.0.0.1 > vite.log 2>&1 &
+      - run: for i in {1..30}; do curl -fsS http://127.0.0.1:5173 && exit 0; sleep 1; done; cat vite.log; exit 1
+      - run: npm run verify:prototype

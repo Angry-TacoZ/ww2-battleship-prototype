@@ -10,7 +10,8 @@ import shellTracerUrl from "../assets/generated/shell-tracer.png";
 import shellSplashUrl from "../assets/generated/shell-splash.png";
 import torpedoWakeUrl from "../assets/generated/torpedo-wake.png";
 import flakBurstUrl from "../assets/generated/flak-burst.png";
-import damageStatusUrl from "../assets/generated/damage-status.png";
+import fireStatusUrl from "../assets/generated/fire-status.png";
+import floodStatusUrl from "../assets/generated/flood-status.png";
 
 export class BattleScene extends Phaser.Scene {
   private model!: BattleModel;
@@ -21,11 +22,15 @@ export class BattleScene extends Phaser.Scene {
   private outcomeText!: Phaser.GameObjects.Text;
   private selectedTargetId?: string;
   private followTarget!: Phaser.GameObjects.Zone;
-  private damageLabels: Phaser.GameObjects.Text[] = [];
-  private visualEffects: Phaser.GameObjects.Image[] = [];
   private shipSprites = new Map<string, Phaser.GameObjects.Image>();
+  private shellSprites = new Map<string, Phaser.GameObjects.Image>();
+  private torpedoSprites = new Map<string, Phaser.GameObjects.Image>();
+  private fireSprites = new Map<string, Phaser.GameObjects.Image>();
+  private floodSprites = new Map<string, Phaser.GameObjects.Image>();
+  private damageLabels = new Map<string, Phaser.GameObjects.Text>();
+  private splashSprites = new Map<string, Phaser.GameObjects.Image>();
+  private activeFlakIds = new Set<string>();
   private ocean!: Phaser.GameObjects.TileSprite;
-  private lastFlakCount = 0;
 
   constructor() {
     super("battle");
@@ -39,7 +44,8 @@ export class BattleScene extends Phaser.Scene {
     this.load.image("art-splash", shellSplashUrl);
     this.load.image("art-torpedo", torpedoWakeUrl);
     this.load.image("art-flak", flakBurstUrl);
-    this.load.image("art-damage", damageStatusUrl);
+    this.load.image("art-fire", fireStatusUrl);
+    this.load.image("art-flood", floodStatusUrl);
   }
 
   create() {
@@ -127,10 +133,6 @@ export class BattleScene extends Phaser.Scene {
   renderWorld() {
     const g = this.world;
     g.clear();
-    this.damageLabels.forEach((label) => label.destroy());
-    this.damageLabels = [];
-    this.visualEffects.forEach((effect) => effect.destroy());
-    this.visualEffects = [];
     this.ocean.tilePositionX = this.model.player.position.x * 0.08;
     this.ocean.tilePositionY = this.model.player.position.y * 0.06;
 
@@ -151,13 +153,8 @@ export class BattleScene extends Phaser.Scene {
         g.strokeCircle(ship.position.x, ship.position.y, radius + 15);
       }
       drawBar(g, ship.position.x - 55, ship.position.y - radius - 20, 110, ship.hp / ship.blueprint.survivability.maxHp, ship.team === "player" ? 0x72d4a8 : 0xd97070);
-      if (ship.fires.length > 0 || ship.floods.length > 0) {
-        const damage = this.add.image(ship.position.x, ship.position.y - 4, "art-damage")
-          .setDisplaySize(radius * 1.1, radius * 1.3)
-          .setDepth(6)
-          .setAlpha(0.92);
-        this.visualEffects.push(damage);
-      }
+      this.syncShipStatusSprite(this.fireSprites, ship.id, ship.fires.length > 0, "art-fire", ship.position.x - radius * 0.12, ship.position.y - radius * 0.1, radius * 0.9, radius * 1.15);
+      this.syncShipStatusSprite(this.floodSprites, ship.id, ship.floods.length > 0, "art-flood", ship.position.x + radius * 0.12, ship.position.y + radius * 0.18, radius * 1.12, radius * 0.72);
     }
     for (const [id, sprite] of this.shipSprites) {
       if (!liveShipIds.has(id)) {
@@ -165,25 +162,11 @@ export class BattleScene extends Phaser.Scene {
         this.shipSprites.delete(id);
       }
     }
+    this.destroyMissingSprites(this.fireSprites, liveShipIds);
+    this.destroyMissingSprites(this.floodSprites, liveShipIds);
 
-    for (const shell of this.model.shells) {
-      const angle = Math.atan2(shell.velocity.y, shell.velocity.x);
-      const tracer = this.add.image(shell.position.x, shell.position.y, "art-shell")
-        .setDisplaySize(38, 38)
-        .setRotation(angle - Math.PI / 4)
-        .setDepth(7)
-        .setTint(shell.ammoType === "AP" ? 0xfff3c4 : 0xffbd81);
-      this.visualEffects.push(tracer);
-    }
-
-    for (const torpedo of this.model.torpedoes) {
-      const angle = Math.atan2(torpedo.velocity.y, torpedo.velocity.x);
-      const wake = this.add.image(torpedo.position.x, torpedo.position.y, "art-torpedo")
-        .setDisplaySize(44, 88)
-        .setRotation(angle + Math.PI / 2)
-        .setDepth(5);
-      this.visualEffects.push(wake);
-    }
+    this.syncShellSprites();
+    this.syncTorpedoSprites();
 
     for (const plane of this.model.aircraft) {
       g.fillStyle(0xe7ebf2);
@@ -196,7 +179,8 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const flakEvents = this.model.texts.filter((text) => text.value.startsWith("Flak"));
-    if (flakEvents.length > this.lastFlakCount) {
+    for (const event of flakEvents) {
+      if (this.activeFlakIds.has(event.id)) continue;
       const target = this.model.aircraft.find((plane) => plane.alive && plane.id === this.model.player.aaPriorityId)
         ?? this.model.aircraft.find((plane) => plane.alive);
       if (target) {
@@ -205,29 +189,11 @@ export class BattleScene extends Phaser.Scene {
           .setDepth(8);
         this.tweens.add({ targets: flak, alpha: 0, scale: 1.35, duration: 420, onComplete: () => flak.destroy() });
       }
+      this.activeFlakIds.add(event.id);
     }
-    this.lastFlakCount = flakEvents.length;
+    this.activeFlakIds = new Set(flakEvents.map((event) => event.id));
 
-    if (appState.options.showDamageNumbers) {
-      for (const text of this.model.texts) {
-        const alpha = 1 - text.age / 1.1;
-        if (!text.value.startsWith("Flak")) {
-          const splash = this.add.image(text.position.x, text.position.y + 12, "art-splash")
-            .setDisplaySize(54, 54)
-            .setAlpha(alpha * 0.72)
-            .setDepth(6);
-          this.visualEffects.push(splash);
-        }
-        const label = this.add.text(text.position.x, text.position.y, text.value, {
-          fontFamily: "Georgia",
-          fontSize: "16px",
-          color: `#${text.color.toString(16).padStart(6, "0")}`,
-          stroke: "#08111a",
-          strokeThickness: 3,
-        }).setOrigin(0.5).setAlpha(alpha);
-        this.damageLabels.push(label);
-      }
-    }
+    this.syncDamageNumbers();
 
     const player = this.model.player;
     this.hud.setText([
@@ -237,6 +203,102 @@ export class BattleScene extends Phaser.Scene {
       `Controls: W/S throttle  A/D rudder  1 AP  2 HE  3 torpedoes  R repair  Ctrl-click priority  Mouse wheel zoom`,
     ]);
     this.outcomeText.setText(this.model.outcome.result === "running" ? "" : `${this.model.outcome.result.toUpperCase()}: ${this.model.outcome.message}`);
+  }
+
+  private syncShellSprites() {
+    const liveIds = new Set<string>();
+    for (const shell of this.model.shells) {
+      liveIds.add(shell.id);
+      let sprite = this.shellSprites.get(shell.id);
+      if (!sprite) {
+        sprite = this.add.image(shell.position.x, shell.position.y, "art-shell").setDepth(7);
+        this.shellSprites.set(shell.id, sprite);
+      }
+      const angle = Math.atan2(shell.velocity.y, shell.velocity.x);
+      sprite.setPosition(shell.position.x, shell.position.y).setDisplaySize(38, 38).setRotation(angle - Math.PI / 4).setTint(shell.ammoType === "AP" ? 0xfff3c4 : 0xffbd81);
+    }
+    this.destroyMissingSprites(this.shellSprites, liveIds);
+  }
+
+  private syncTorpedoSprites() {
+    const liveIds = new Set<string>();
+    for (const torpedo of this.model.torpedoes) {
+      liveIds.add(torpedo.id);
+      let sprite = this.torpedoSprites.get(torpedo.id);
+      if (!sprite) {
+        sprite = this.add.image(torpedo.position.x, torpedo.position.y, "art-torpedo").setDepth(5);
+        this.torpedoSprites.set(torpedo.id, sprite);
+      }
+      const angle = Math.atan2(torpedo.velocity.y, torpedo.velocity.x);
+      sprite.setPosition(torpedo.position.x, torpedo.position.y).setDisplaySize(44, 88).setRotation(angle + Math.PI / 2);
+    }
+    this.destroyMissingSprites(this.torpedoSprites, liveIds);
+  }
+
+  private syncShipStatusSprite(sprites: Map<string, Phaser.GameObjects.Image>, shipId: string, active: boolean, texture: string, x: number, y: number, width: number, height: number) {
+    if (!active) {
+      const sprite = sprites.get(shipId);
+      if (sprite) {
+        sprite.destroy();
+        sprites.delete(shipId);
+      }
+      return;
+    }
+    let sprite = sprites.get(shipId);
+    if (!sprite) {
+      sprite = this.add.image(x, y, texture).setDepth(6).setAlpha(0.92);
+      sprites.set(shipId, sprite);
+    }
+    sprite.setPosition(x, y).setDisplaySize(width, height);
+  }
+
+  private syncDamageNumbers() {
+    if (!appState.options.showDamageNumbers) {
+      this.destroyMissingSprites(this.splashSprites, new Set<string>());
+      this.damageLabels.forEach((label) => label.destroy());
+      this.damageLabels.clear();
+      return;
+    }
+    const liveIds = new Set<string>();
+    for (const text of this.model.texts) {
+      if (text.value.startsWith("Flak")) continue;
+      liveIds.add(text.id);
+      const alpha = 1 - text.age / 1.1;
+      let splash = this.splashSprites.get(text.id);
+      if (!splash) {
+        splash = this.add.image(text.position.x, text.position.y + 12, "art-splash").setDisplaySize(54, 54).setDepth(6);
+        this.splashSprites.set(text.id, splash);
+      }
+      splash.setPosition(text.position.x, text.position.y + 12).setAlpha(alpha * 0.72);
+      let label = this.damageLabels.get(text.id);
+      if (!label) {
+        label = this.add.text(text.position.x, text.position.y, text.value, {
+          fontFamily: "Georgia",
+          fontSize: "16px",
+          color: `#${text.color.toString(16).padStart(6, "0")}`,
+          stroke: "#08111a",
+          strokeThickness: 3,
+        }).setOrigin(0.5);
+        this.damageLabels.set(text.id, label);
+      }
+      label.setPosition(text.position.x, text.position.y).setAlpha(alpha);
+    }
+    this.destroyMissingSprites(this.splashSprites, liveIds);
+    for (const [id, label] of this.damageLabels) {
+      if (!liveIds.has(id)) {
+        label.destroy();
+        this.damageLabels.delete(id);
+      }
+    }
+  }
+
+  private destroyMissingSprites(sprites: Map<string, Phaser.GameObjects.Image>, liveIds: Set<string>) {
+    for (const [id, sprite] of sprites) {
+      if (!liveIds.has(id)) {
+        sprite.destroy();
+        sprites.delete(id);
+      }
+    }
   }
 }
 
