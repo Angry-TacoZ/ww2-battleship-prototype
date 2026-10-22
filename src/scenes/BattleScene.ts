@@ -199,6 +199,7 @@ export class BattleScene extends Phaser.Scene {
     }
     this.activeFlakIds = new Set(flakEvents.map((event) => event.id));
 
+    this.syncShellImpacts();
     this.syncDamageNumbers();
 
     const player = this.model.player;
@@ -260,7 +261,6 @@ export class BattleScene extends Phaser.Scene {
 
   private syncDamageNumbers() {
     if (!appState.options.showDamageNumbers) {
-      this.destroyMissingSprites(this.splashSprites, new Set<string>());
       this.damageLabels.forEach((label) => label.destroy());
       this.damageLabels.clear();
       return;
@@ -270,12 +270,6 @@ export class BattleScene extends Phaser.Scene {
       if (text.value.startsWith("Flak")) continue;
       liveIds.add(text.id);
       const alpha = 1 - text.age / 1.1;
-      let splash = this.splashSprites.get(text.id);
-      if (!splash) {
-        splash = this.add.image(text.position.x, text.position.y + 12, "art-splash").setDisplaySize(54, 54).setDepth(6);
-        this.splashSprites.set(text.id, splash);
-      }
-      splash.setPosition(text.position.x, text.position.y + 12).setAlpha(alpha * 0.72);
       let label = this.damageLabels.get(text.id);
       if (!label) {
         label = this.add.text(text.position.x, text.position.y, text.value, {
@@ -289,13 +283,27 @@ export class BattleScene extends Phaser.Scene {
       }
       label.setPosition(text.position.x, text.position.y).setAlpha(alpha);
     }
-    this.destroyMissingSprites(this.splashSprites, liveIds);
     for (const [id, label] of this.damageLabels) {
       if (!liveIds.has(id)) {
         label.destroy();
         this.damageLabels.delete(id);
       }
     }
+  }
+
+  private syncShellImpacts() {
+    const liveIds = new Set<string>();
+    for (const impact of this.model.shellImpacts) {
+      liveIds.add(impact.id);
+      const alpha = 1 - impact.age / 1.1;
+      let splash = this.splashSprites.get(impact.id);
+      if (!splash) {
+        splash = this.add.image(impact.position.x, impact.position.y, "art-splash").setDisplaySize(54, 54).setDepth(6);
+        this.splashSprites.set(impact.id, splash);
+      }
+      splash.setPosition(impact.position.x, impact.position.y).setAlpha(alpha * 0.72);
+    }
+    this.destroyMissingSprites(this.splashSprites, liveIds);
   }
 
   private destroyMissingSprites(sprites: Map<string, Phaser.GameObjects.Image>, liveIds: Set<string>) {

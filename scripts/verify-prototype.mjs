@@ -100,6 +100,91 @@ async function setupCloseSurfaceFight(page) {
   await page.evaluate(() => window.advanceTime?.(200));
 }
 
+async function verifyShellSplashRouting(page) {
+  const aa = await page.evaluate(() => {
+    const model = window.__ironHorizonDebug.getModel();
+    const scene = window.__ironHorizonDebug.getScene();
+    model.shellImpacts = [];
+    model.shells = [];
+    model.texts = [{ id: "test-aa", position: { x: 2200, y: 2100 }, value: "AA 1", color: 0xffffff, age: 0 }];
+    scene.renderWorld();
+    return { impacts: model.shellImpacts.length, splashes: scene.splashSprites.size };
+  });
+
+  await page.evaluate(() => {
+    const options = JSON.parse(localStorage.getItem("iron-horizon-options") || "{}");
+    localStorage.setItem("iron-horizon-options", JSON.stringify({ ...options, showDamageNumbers: false }));
+  });
+  await launchBattle(page, "germany");
+
+  const shellResults = await page.evaluate(() => {
+    const model = window.__ironHorizonDebug.getModel();
+    const scene = window.__ironHorizonDebug.getScene();
+    for (const ship of model.ships) {
+      ship.velocity = { x: 0, y: 0 };
+      ship.throttle = 0;
+      ship.desiredThrottle = 0;
+      ship.secondaryReload = 10000;
+      ship.aiFireDelay = 10000;
+    }
+    model.aircraft = [];
+    model.aircraftTimer = 10000;
+    model.shellImpacts = [];
+    model.shells = [];
+    model.texts = [];
+
+    const enemy = model.ships.find((ship) => ship.team === "enemy");
+    model.shells.push({
+      id: "test-hit-shell",
+      team: "player",
+      ownerId: model.playerId,
+      ammoType: "AP",
+      position: { ...enemy.position },
+      velocity: { x: 0, y: 0 },
+      damage: 100,
+      maxRange: 1000,
+      traveled: 0,
+      caliber: 406,
+      shellWeight: 1200,
+    });
+    model.update(1 / 60, { throttleDelta: 0, rudder: 0 });
+    scene.renderWorld();
+    const hit = {
+      events: model.shellImpacts.length,
+      splashes: scene.splashSprites.size,
+      labels: scene.damageLabels.size,
+    };
+
+    model.shellImpacts = [];
+    scene.renderWorld();
+    model.shells = [{
+      id: "test-miss-shell",
+      team: "player",
+      ownerId: model.playerId,
+      ammoType: "AP",
+      position: { x: 120, y: 120 },
+      velocity: { x: 0, y: 0 },
+      damage: 100,
+      maxRange: 0.5,
+      traveled: 1,
+      caliber: 406,
+      shellWeight: 1200,
+    }];
+    model.update(1 / 60, { throttleDelta: 0, rudder: 0 });
+    scene.renderWorld();
+    return {
+      hit,
+      miss: {
+        events: model.shellImpacts.length,
+        splashes: scene.splashSprites.size,
+        shellsRemaining: model.shells.length,
+      },
+    };
+  });
+
+  return { aa, ...shellResults };
+}
+
 async function spawnAircraftPair(page) {
   await page.evaluate(() => {
     const model = window.__ironHorizonDebug.getModel();
@@ -117,6 +202,29 @@ async function run() {
   const page = await browser.newPage({ viewport: VIEWPORT });
   const results = [];
 
+  await launchBattle(page, "germany");
+  await setupCloseSurfaceFight(page);
+
+  const splashRouting = await verifyShellSplashRouting(page);
+  results.push({
+    name: "AA floating text does not create a shell splash",
+    pass: splashRouting.aa.impacts === 0 && splashRouting.aa.splashes === 0,
+    detail: splashRouting.aa,
+  });
+  results.push({
+    name: "Shell-hit splashes render when damage numbers are disabled",
+    pass: splashRouting.hit.events === 1 && splashRouting.hit.splashes === 1 && splashRouting.hit.labels === 0,
+    detail: splashRouting.hit,
+  });
+  results.push({
+    name: "Shells expiring at maximum range create a splash",
+    pass: splashRouting.miss.events === 1 && splashRouting.miss.splashes === 1 && splashRouting.miss.shellsRemaining === 0,
+    detail: splashRouting.miss,
+  });
+  await page.evaluate(() => {
+    const options = JSON.parse(localStorage.getItem("iron-horizon-options") || "{}");
+    localStorage.setItem("iron-horizon-options", JSON.stringify({ ...options, showDamageNumbers: true }));
+  });
   await launchBattle(page, "germany");
   await setupCloseSurfaceFight(page);
 
