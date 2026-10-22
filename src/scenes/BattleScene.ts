@@ -18,6 +18,7 @@ const SHELL_ART_ROTATION_OFFSET = Math.PI / 3;
 
 export class BattleScene extends Phaser.Scene {
   private model!: BattleModel;
+  private hudCamera!: Phaser.Cameras.Scene2D.Camera;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private hud!: Phaser.GameObjects.Text;
@@ -58,7 +59,7 @@ export class BattleScene extends Phaser.Scene {
     this.ocean = this.add.tileSprite(2700, 2100, 5400, 4200, "art-ocean").setDepth(-2);
     this.ocean.setTileScale(0.72, 0.72);
     this.world = this.add.graphics();
-    this.add.rectangle(16, 14, 1015, 142, 0x06131f, 0.84)
+    const hudPanel = this.add.rectangle(16, 14, 1015, 142, 0x06131f, 0.84)
       .setOrigin(0)
       .setStrokeStyle(2, 0x6db8cf, 0.55)
       .setScrollFactor(0)
@@ -82,6 +83,10 @@ export class BattleScene extends Phaser.Scene {
     this.followTarget = this.add.zone(this.model.player.position.x, this.model.player.position.y, 10, 10);
     this.cameras.main.setBounds(0, 0, 5400, 4200);
     this.cameras.main.startFollow(this.followTarget, true, 0.09, 0.09);
+    const hudObjects = new Set<Phaser.GameObjects.GameObject>([hudPanel, this.hud, this.outcomeText]);
+    this.cameras.main.ignore([...hudObjects]);
+    this.hudCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height).setScroll(0, 0);
+    this.hudCamera.ignore(this.children.list.filter((child) => !hudObjects.has(child)));
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       const worldPoint = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
       const picked = this.model.pickTargetAt(worldPoint, pointer.event.ctrlKey);
@@ -146,7 +151,7 @@ export class BattleScene extends Phaser.Scene {
       const outlineColor = ship.team === "player" ? 0xffffff : 0xf88d8d;
       let shipArt = this.shipSprites.get(ship.id);
       if (!shipArt) {
-        shipArt = this.add.image(ship.position.x, ship.position.y, ship.team === "player" ? "art-player-ship" : "art-enemy-ship").setDepth(4);
+        shipArt = this.ignoreOnHudCamera(this.add.image(ship.position.x, ship.position.y, ship.team === "player" ? "art-player-ship" : "art-enemy-ship").setDepth(4));
         this.shipSprites.set(ship.id, shipArt);
       }
       shipArt.setPosition(ship.position.x, ship.position.y).setDisplaySize(radius * 1.15, radius * 3.1).setRotation(ship.heading + Math.PI / 2);
@@ -184,9 +189,9 @@ export class BattleScene extends Phaser.Scene {
     const flakEvents = this.model.texts.filter((text) => text.value.startsWith("Flak"));
     for (const event of flakEvents) {
       if (this.activeFlakIds.has(event.id)) continue;
-      const flak = this.add.image(event.position.x, event.position.y, "art-flak")
+      const flak = this.ignoreOnHudCamera(this.add.image(event.position.x, event.position.y, "art-flak")
         .setDisplaySize(72, 72)
-        .setDepth(8);
+        .setDepth(8));
       this.tweens.add({
         targets: flak,
         alpha: 0,
@@ -218,7 +223,7 @@ export class BattleScene extends Phaser.Scene {
       liveIds.add(shell.id);
       let sprite = this.shellSprites.get(shell.id);
       if (!sprite) {
-        sprite = this.add.image(shell.position.x, shell.position.y, "art-shell").setDepth(7);
+        sprite = this.ignoreOnHudCamera(this.add.image(shell.position.x, shell.position.y, "art-shell").setDepth(7));
         this.shellSprites.set(shell.id, sprite);
       }
       const angle = Math.atan2(shell.velocity.y, shell.velocity.x);
@@ -233,7 +238,7 @@ export class BattleScene extends Phaser.Scene {
       liveIds.add(torpedo.id);
       let sprite = this.torpedoSprites.get(torpedo.id);
       if (!sprite) {
-        sprite = this.add.image(torpedo.position.x, torpedo.position.y, "art-torpedo").setDepth(5);
+        sprite = this.ignoreOnHudCamera(this.add.image(torpedo.position.x, torpedo.position.y, "art-torpedo").setDepth(5));
         this.torpedoSprites.set(torpedo.id, sprite);
       }
       const angle = Math.atan2(torpedo.velocity.y, torpedo.velocity.x);
@@ -253,7 +258,7 @@ export class BattleScene extends Phaser.Scene {
     }
     let sprite = sprites.get(shipId);
     if (!sprite) {
-      sprite = this.add.image(x, y, texture).setDepth(6).setAlpha(0.92);
+      sprite = this.ignoreOnHudCamera(this.add.image(x, y, texture).setDepth(6).setAlpha(0.92));
       sprites.set(shipId, sprite);
     }
     sprite.setPosition(x, y).setDisplaySize(width, height);
@@ -272,13 +277,13 @@ export class BattleScene extends Phaser.Scene {
       const alpha = 1 - text.age / 1.1;
       let label = this.damageLabels.get(text.id);
       if (!label) {
-        label = this.add.text(text.position.x, text.position.y, text.value, {
+        label = this.ignoreOnHudCamera(this.add.text(text.position.x, text.position.y, text.value, {
           fontFamily: "Georgia",
           fontSize: "16px",
           color: `#${text.color.toString(16).padStart(6, "0")}`,
           stroke: "#08111a",
           strokeThickness: 3,
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
         this.damageLabels.set(text.id, label);
       }
       label.setPosition(text.position.x, text.position.y).setAlpha(alpha);
@@ -298,12 +303,17 @@ export class BattleScene extends Phaser.Scene {
       const alpha = 1 - impact.age / 1.1;
       let splash = this.splashSprites.get(impact.id);
       if (!splash) {
-        splash = this.add.image(impact.position.x, impact.position.y, "art-splash").setDisplaySize(54, 54).setDepth(6);
+        splash = this.ignoreOnHudCamera(this.add.image(impact.position.x, impact.position.y, "art-splash").setDisplaySize(54, 54).setDepth(6));
         this.splashSprites.set(impact.id, splash);
       }
       splash.setPosition(impact.position.x, impact.position.y).setAlpha(alpha * 0.72);
     }
     this.destroyMissingSprites(this.splashSprites, liveIds);
+  }
+
+  private ignoreOnHudCamera<T extends Phaser.GameObjects.GameObject>(object: T) {
+    this.hudCamera.ignore(object);
+    return object;
   }
 
   private destroyMissingSprites(sprites: Map<string, Phaser.GameObjects.Image>, liveIds: Set<string>) {
