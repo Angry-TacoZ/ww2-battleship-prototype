@@ -13,6 +13,9 @@ import flakBurstUrl from "../assets/generated/flak-burst.png";
 import fireStatusUrl from "../assets/generated/fire-status.png";
 import floodStatusUrl from "../assets/generated/flood-status.png";
 
+// The texture's nose is rotated about 60 degrees in its square display size.
+const SHELL_ART_ROTATION_OFFSET = Math.PI / 3;
+
 export class BattleScene extends Phaser.Scene {
   private model!: BattleModel;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -181,14 +184,17 @@ export class BattleScene extends Phaser.Scene {
     const flakEvents = this.model.texts.filter((text) => text.value.startsWith("Flak"));
     for (const event of flakEvents) {
       if (this.activeFlakIds.has(event.id)) continue;
-      const target = this.model.aircraft.find((plane) => plane.alive && plane.id === this.model.player.aaPriorityId)
-        ?? this.model.aircraft.find((plane) => plane.alive);
-      if (target) {
-        const flak = this.add.image(target.position.x, target.position.y, "art-flak")
-          .setDisplaySize(72, 72)
-          .setDepth(8);
-        this.tweens.add({ targets: flak, alpha: 0, scale: 1.35, duration: 420, onComplete: () => flak.destroy() });
-      }
+      const flak = this.add.image(event.position.x, event.position.y, "art-flak")
+        .setDisplaySize(72, 72)
+        .setDepth(8);
+      this.tweens.add({
+        targets: flak,
+        alpha: 0,
+        scaleX: flak.scaleX * 1.35,
+        scaleY: flak.scaleY * 1.35,
+        duration: 420,
+        onComplete: () => flak.destroy(),
+      });
       this.activeFlakIds.add(event.id);
     }
     this.activeFlakIds = new Set(flakEvents.map((event) => event.id));
@@ -215,7 +221,7 @@ export class BattleScene extends Phaser.Scene {
         this.shellSprites.set(shell.id, sprite);
       }
       const angle = Math.atan2(shell.velocity.y, shell.velocity.x);
-      sprite.setPosition(shell.position.x, shell.position.y).setDisplaySize(38, 38).setRotation(angle - Math.PI / 4).setTint(shell.ammoType === "AP" ? 0xfff3c4 : 0xffbd81);
+      sprite.setPosition(shell.position.x, shell.position.y).setDisplaySize(38, 38).setRotation(angle + SHELL_ART_ROTATION_OFFSET).setTint(shell.ammoType === "AP" ? 0xfff3c4 : 0xffbd81);
     }
     this.destroyMissingSprites(this.shellSprites, liveIds);
   }
