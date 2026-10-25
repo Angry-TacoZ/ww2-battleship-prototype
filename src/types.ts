@@ -191,6 +191,12 @@ export interface FloatingText {
   age: number;
 }
 
+export interface ShellImpactEvent {
+  id: string;
+  position: Vec2;
+  age: number;
+}
+
 export interface BattleOutcome {
   result: "running" | "victory" | "defeat";
   message: string;

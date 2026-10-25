@@ -7,6 +7,7 @@ import type {
   Nation,
   ShipBlueprint,
   ShipState,
+  ShellImpactEvent,
   ShellState,
   TorpedoState,
   Vec2,
@@ -31,6 +32,7 @@ export class BattleModel {
   aircraft: AircraftState[] = [];
   shells: ShellState[] = [];
   torpedoes: TorpedoState[] = [];
+  shellImpacts: ShellImpactEvent[] = [];
   texts: FloatingText[] = [];
   outcome: BattleOutcome = { result: "running", message: "Engage the enemy battle line." };
   time = 0;
@@ -57,6 +59,7 @@ export class BattleModel {
     this.aircraft = [];
     this.shells = [];
     this.torpedoes = [];
+    this.shellImpacts = [];
     this.texts = [];
     this.outcome = { result: "running", message: "Destroy the enemy line and survive air attack." };
     this.time = 0;
@@ -144,6 +147,13 @@ export class BattleModel {
       text.position.y -= dt * 12;
     });
     this.texts = this.texts.filter((text) => text.age < 1.1).slice(-BALANCE.maxVisibleDamageTexts);
+    for (const shell of this.shells) {
+      if (shell.traveled > shell.maxRange) {
+        this.shellImpacts.push({ id: uid("splash"), position: { ...shell.position }, age: 0 });
+      }
+    }
+    this.shellImpacts.forEach((impact) => { impact.age += dt; });
+    this.shellImpacts = this.shellImpacts.filter((impact) => impact.age < 1.1);
     this.shells = this.shells.filter((shell) => shell.traveled <= shell.maxRange);
     this.torpedoes = this.torpedoes.filter((torpedo) => torpedo.traveled <= torpedo.maxRange);
     this.aircraft = this.aircraft.filter((plane) => plane.alive && plane.hp > 0);
@@ -272,6 +282,7 @@ export class BattleModel {
       if (!owner) continue;
       const impactAngle = impactAngleFromShell(hit, shell.position);
       const outcome = applyShellDamage(owner, hit, shell.damage, shell.ammoType, impactAngle, shell.caliber, shell.shellWeight);
+      this.shellImpacts.push({ id: uid("splash"), position: { ...shell.position }, age: 0 });
       this.texts.push({
         id: uid("hit"),
         position: { ...hit.position },

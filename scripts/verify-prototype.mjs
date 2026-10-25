@@ -35,8 +35,8 @@ async function getTargetScreenPoint(page, kind, index = 0) {
     const cam = scene.cameras.main;
     const entity = kind === "ship" ? model.ships.filter((ship) => ship.team === "enemy" && ship.alive)[index] : model.aircraft.filter((plane) => plane.alive)[index];
     return {
-      x: (entity.position.x - cam.scrollX) * cam.zoom,
-      y: (entity.position.y - cam.scrollY) * cam.zoom,
+      x: cam.x + (entity.position.x - cam.worldView.x) * cam.zoom,
+      y: cam.y + (entity.position.y - cam.worldView.y) * cam.zoom,
       id: entity.id,
     };
   }, { kind, index });
@@ -50,8 +50,8 @@ async function getAircraftPointById(page, id) {
     const cam = scene.cameras.main;
     const entity = model.aircraft.find((plane) => plane.id === id);
     return {
-      x: (entity.position.x - cam.scrollX) * cam.zoom,
-      y: (entity.position.y - cam.scrollY) * cam.zoom,
+      x: cam.x + (entity.position.x - cam.worldView.x) * cam.zoom,
+      y: cam.y + (entity.position.y - cam.worldView.y) * cam.zoom,
       id: entity.id,
     };
   }, id);
@@ -100,6 +100,136 @@ async function setupCloseSurfaceFight(page) {
   await page.evaluate(() => window.advanceTime?.(200));
 }
 
+async function verifyShellSplashRouting(page) {
+  const aa = await page.evaluate(() => {
+    const model = window.__ironHorizonDebug.getModel();
+    const scene = window.__ironHorizonDebug.getScene();
+    model.shellImpacts = [];
+    model.shells = [];
+    model.texts = [{ id: "test-aa", position: { x: 2200, y: 2100 }, value: "AA 1", color: 0xffffff, age: 0 }];
+    scene.renderWorld();
+    return { impacts: model.shellImpacts.length, splashes: scene.splashSprites.size };
+  });
+
+  await page.evaluate(() => {
+    const options = JSON.parse(localStorage.getItem("iron-horizon-options") || "{}");
+    localStorage.setItem("iron-horizon-options", JSON.stringify({ ...options, showDamageNumbers: false }));
+  });
+  await launchBattle(page, "germany");
+
+  const shellResults = await page.evaluate(() => {
+    const model = window.__ironHorizonDebug.getModel();
+    const scene = window.__ironHorizonDebug.getScene();
+    for (const ship of model.ships) {
+      ship.velocity = { x: 0, y: 0 };
+      ship.throttle = 0;
+      ship.desiredThrottle = 0;
+      ship.secondaryReload = 10000;
+      ship.aiFireDelay = 10000;
+    }
+    model.aircraft = [];
+    model.aircraftTimer = 10000;
+    model.shellImpacts = [];
+    model.shells = [];
+    model.texts = [];
+
+    const enemy = model.ships.find((ship) => ship.team === "enemy");
+    model.shells.push({
+      id: "test-hit-shell",
+      team: "player",
+      ownerId: model.playerId,
+      ammoType: "AP",
+      position: { ...enemy.position },
+      velocity: { x: 0, y: 0 },
+      damage: 100,
+      maxRange: 1000,
+      traveled: 0,
+      caliber: 406,
+      shellWeight: 1200,
+    });
+    model.update(1 / 60, { throttleDelta: 0, rudder: 0 });
+    scene.renderWorld();
+    const hit = {
+      events: model.shellImpacts.length,
+      splashes: scene.splashSprites.size,
+      labels: scene.damageLabels.size,
+    };
+
+    model.shellImpacts = [];
+    scene.renderWorld();
+    model.shells = [{
+      id: "test-miss-shell",
+      team: "player",
+      ownerId: model.playerId,
+      ammoType: "AP",
+      position: { x: 120, y: 120 },
+      velocity: { x: 0, y: 0 },
+      damage: 100,
+      maxRange: 0.5,
+      traveled: 1,
+      caliber: 406,
+      shellWeight: 1200,
+    }];
+    model.update(1 / 60, { throttleDelta: 0, rudder: 0 });
+    scene.renderWorld();
+    return {
+      hit,
+      miss: {
+        events: model.shellImpacts.length,
+        splashes: scene.splashSprites.size,
+        shellsRemaining: model.shells.length,
+      },
+    };
+  });
+
+  return { aa, ...shellResults };
+}
+
+async function verifyHudZoom(page) {
+  const states = [];
+  for (const { zoom, deltaY } of [{ zoom: 0.9, deltaY: 0 }, { zoom: 0.55, deltaY: 350 }, { zoom: 1.35, deltaY: -800 }]) {
+    if (deltaY !== 0) {
+      await page.mouse.wheel(0, deltaY);
+      await page.waitForTimeout(120);
+    }
+    const state = await page.evaluate((zoom) => {
+      const scene = window.__ironHorizonDebug.getScene();
+      const worldCamera = scene.cameras.main;
+      const hudCamera = scene.hudCamera;
+      scene.renderWorld();
+      const panel = scene.children.list.find((child) => child.type === "Rectangle" && child.depth === 19);
+      const panelBounds = panel.getBounds();
+      const worldShip = scene.shipSprites.values().next().value;
+      return {
+        zoom,
+        actualWorldCameraZoom: worldCamera.zoom,
+        hudCameraZoom: hudCamera.zoom,
+        hudCameraSize: { width: hudCamera.width, height: hudCamera.height },
+        panelVisibleOnHudCamera: (panel.cameraFilter & hudCamera.id) === 0,
+        panelExcludedFromWorldCamera: (panel.cameraFilter & worldCamera.id) !== 0,
+        panelBounds: { left: panelBounds.left, top: panelBounds.top, right: panelBounds.right, bottom: panelBounds.bottom },
+        panelInsideViewport: panelBounds.left >= 0 && panelBounds.top >= 0 && panelBounds.right <= window.innerWidth && panelBounds.bottom <= window.innerHeight,
+        hudRows: scene.hud.text.split("\n").length,
+        worldShipExcludedFromHudCamera: Boolean(worldShip && (worldShip.cameraFilter & hudCamera.id) !== 0),
+      };
+    }, zoom);
+    await page.screenshot({ path: `output/web-game/hud-zoom-${zoom}.png` });
+    states.push(state);
+  }
+  const maxZoomTarget = await getTargetScreenPoint(page, "ship", 1);
+  await dispatchCanvasClick(page, maxZoomTarget.x, maxZoomTarget.y, { ctrlKey: true });
+  const maxZoomPriority = await page.evaluate(() => {
+    const model = window.__ironHorizonDebug.getModel();
+    const targetId = model.player.secondaryPriorityId;
+    model.player.secondaryPriorityId = undefined;
+    return targetId;
+  });
+  await page.mouse.wheel(0, 450);
+  await page.waitForTimeout(120);
+  await page.evaluate(() => window.__ironHorizonDebug.getScene().renderWorld());
+  return { states, maxZoomPriority, expectedMaxZoomPriority: maxZoomTarget.id };
+}
+
 async function spawnAircraftPair(page) {
   await page.evaluate(() => {
     const model = window.__ironHorizonDebug.getModel();
@@ -119,6 +249,49 @@ async function run() {
 
   await launchBattle(page, "germany");
   await setupCloseSurfaceFight(page);
+
+  const splashRouting = await verifyShellSplashRouting(page);
+  results.push({
+    name: "AA floating text does not create a shell splash",
+    pass: splashRouting.aa.impacts === 0 && splashRouting.aa.splashes === 0,
+    detail: splashRouting.aa,
+  });
+  results.push({
+    name: "Shell-hit splashes render when damage numbers are disabled",
+    pass: splashRouting.hit.events === 1 && splashRouting.hit.splashes === 1 && splashRouting.hit.labels === 0,
+    detail: splashRouting.hit,
+  });
+  results.push({
+    name: "Shells expiring at maximum range create a splash",
+    pass: splashRouting.miss.events === 1 && splashRouting.miss.splashes === 1 && splashRouting.miss.shellsRemaining === 0,
+    detail: splashRouting.miss,
+  });
+  await page.evaluate(() => {
+    const options = JSON.parse(localStorage.getItem("iron-horizon-options") || "{}");
+    localStorage.setItem("iron-horizon-options", JSON.stringify({ ...options, showDamageNumbers: true }));
+  });
+  await launchBattle(page, "germany");
+  await setupCloseSurfaceFight(page);
+
+  const hudZoomStates = await verifyHudZoom(page);
+  results.push({
+    name: "HUD stays fixed and visible across minimum, default, and maximum zoom",
+    pass: hudZoomStates.states.every((state) => state.actualWorldCameraZoom === state.zoom
+      && state.hudCameraZoom === 1
+      && state.hudCameraSize.width === VIEWPORT.width
+      && state.hudCameraSize.height === VIEWPORT.height
+      && state.panelVisibleOnHudCamera
+      && state.panelExcludedFromWorldCamera
+      && state.panelInsideViewport
+      && state.hudRows === 4
+      && state.worldShipExcludedFromHudCamera),
+    detail: hudZoomStates.states,
+  });
+  results.push({
+    name: "Priority targeting still works at maximum zoom",
+    pass: hudZoomStates.maxZoomPriority === hudZoomStates.expectedMaxZoomPriority,
+    detail: { selected: hudZoomStates.maxZoomPriority, expected: hudZoomStates.expectedMaxZoomPriority },
+  });
 
   const beforeMain = await getSnapshot(page);
   const enemyPoint = await getTargetScreenPoint(page, "ship", 0);
